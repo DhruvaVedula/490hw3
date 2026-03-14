@@ -14,6 +14,7 @@ Reproducible pipeline for:
 import json
 import random
 import argparse
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Optional
 
@@ -180,13 +181,14 @@ def load_data_jsonl(path: str = 'data.jsonl'):
 # Part 3: Perturbations
 # =============================================================================
 
-def perturb_relative_clause(text: str, nlp) -> str:
+def perturb_relative_clause(text: str, nlp, doc=None) -> str:
     """
     Perturbation 1: Convert "ADJ NOUN" to "NOUN, who is ADJ,".
     E.g. "The wealthy investor" -> "The investor, who is wealthy,"
     """
     try:
-        doc = nlp(text)
+        if doc is None:
+            doc = nlp(text)
         new_tokens = []
         i = 0
         while i < len(doc.sentences):
@@ -215,13 +217,14 @@ def perturb_relative_clause(text: str, nlp) -> str:
         return text
 
 
-def perturb_appositive_simple(text: str, nlp) -> str:
+def perturb_appositive_simple(text: str, nlp, doc=None) -> str:
     """
     Perturbation 2: Add simple appositive after first NP.
     E.g. "The investor bought stock" -> "The investor, a key stakeholder, bought stock"
     """
     try:
-        doc = nlp(text)
+        if doc is None:
+            doc = nlp(text)
         for sent in doc.sentences:
             if not hasattr(sent, 'words'):
                 continue
@@ -241,13 +244,14 @@ def perturb_appositive_simple(text: str, nlp) -> str:
         return text
 
 
-def perturb_extra_relative(text: str, nlp) -> str:
+def perturb_extra_relative(text: str, nlp, doc=None) -> str:
     """
     Perturbation 3: Add extra relative clause with irrelevant info.
     E.g. "The wealthy investor" -> "The wealthy investor, who is related to Sam's older sister,"
     """
     try:
-        doc = nlp(text)
+        if doc is None:
+            doc = nlp(text)
         for sent in doc.sentences:
             if not hasattr(sent, 'words'):
                 continue
@@ -268,6 +272,33 @@ PERTURBATIONS = {
     'appositive': perturb_appositive_simple,
     'extra_relative': perturb_extra_relative,
 }
+
+
+def _process_chunk(args):
+    """Worker: process a chunk of examples. Returns (complex_rows, perturbed_dict)."""
+    chunk, _ = args
+    import stanza
+    processors = 'tokenize,pos,lemma,constituency,depparse'
+    nlp = stanza.Pipeline('en', processors=processors, verbose=False)
+    complex_rows = []
+    perturbed = {pname: [] for pname in PERTURBATIONS}
+    for ex in chunk:
+        prem, hyp = ex['premise'], ex['hypothesis']
+        prem_doc = nlp(prem)
+        hyp_doc = nlp(hyp)
+        orig_text = f"{prem} {hyp}"
+        orig_complex = compute_complexity(orig_text, nlp)
+        for metric, val in orig_complex.items():
+            complex_rows.append({'perturbation method': 'original', 'metric type': metric, 'value': val})
+        for pname, pfunc in PERTURBATIONS.items():
+            pert_prem = pfunc(prem, nlp, doc=prem_doc)
+            pert_hyp = pfunc(hyp, nlp, doc=hyp_doc)
+            pert_text = f"{pert_prem} {pert_hyp}"
+            pert_complex = compute_complexity(pert_text, nlp)
+            perturbed[pname].append({'premise': pert_prem, 'hypothesis': pert_hyp, 'text': pert_text, 'label': ex['label'], 'split': ex['split']})
+            for metric, val in pert_complex.items():
+                complex_rows.append({'perturbation method': pname, 'metric type': metric, 'value': val})
+    return complex_rows, perturbed
 
 
 # =============================================================================
@@ -364,30 +395,42 @@ def main(args):
         complex_agg.to_csv(str(out_dir / 'complex.csv'), index=False)
         print("Loaded cache, skipping perturbations.")
     else:
-        print("Setting up Stanza parser...")
-        nlp = setup_parser()
-
-        # Part 1 & 3: Compute complexity for original and perturbed
-        print("Computing complexity metrics...")
-        complex_rows = []
-        perturbed_examples = {pname: [] for pname in PERTURBATIONS}
-
-        for ex in tqdm(examples, desc="Perturbing"):
-            prem, hyp = ex['premise'], ex['hypothesis']
-            orig_text = f"{prem} {hyp}"
-            orig_complex = compute_complexity(orig_text, nlp)
-
-            for metric, val in orig_complex.items():
-                complex_rows.append({'perturbation method': 'original', 'metric type': metric, 'value': val})
-
-            for pname, pfunc in PERTURBATIONS.items():
-                pert_prem = pfunc(prem, nlp)
-                pert_hyp = pfunc(hyp, nlp)
-                pert_text = f"{pert_prem} {pert_hyp}"
-                pert_complex = compute_complexity(pert_text, nlp)
-                perturbed_examples[pname].append({'premise': pert_prem, 'hypothesis': pert_hyp, 'text': pert_text, 'label': ex['label'], 'split': ex['split']})
-                for metric, val in pert_complex.items():
-                    complex_rows.append({'perturbation method': pname, 'metric type': metric, 'value': val})
+        workers = getattr(args, 'workers', 1) or 1
+        if workers > 1:
+            import stanza
+            print(f"Using {workers} workers for parallel perturbation...")
+            stanza.download('en', processors='tokenize,pos,lemma,constituency,depparse', verbose=False)
+            chunk_size = max(1, (len(examples) + workers - 1) // workers)
+            chunks = [(examples[i:i + chunk_size], i) for i in range(0, len(examples), chunk_size)]
+            with Pool(workers) as pool:
+                results = list(tqdm(pool.imap(_process_chunk, chunks), total=len(chunks), desc="Perturbing"))
+            complex_rows = []
+            perturbed_examples = {pname: [] for pname in PERTURBATIONS}
+            for cr, pdict in results:
+                complex_rows.extend(cr)
+                for pname in PERTURBATIONS:
+                    perturbed_examples[pname].extend(pdict[pname])
+        else:
+            print("Setting up Stanza parser...")
+            nlp = setup_parser()
+            complex_rows = []
+            perturbed_examples = {pname: [] for pname in PERTURBATIONS}
+            for ex in tqdm(examples, desc="Perturbing"):
+                prem, hyp = ex['premise'], ex['hypothesis']
+                prem_doc = nlp(prem)
+                hyp_doc = nlp(hyp)
+                orig_text = f"{prem} {hyp}"
+                orig_complex = compute_complexity(orig_text, nlp)
+                for metric, val in orig_complex.items():
+                    complex_rows.append({'perturbation method': 'original', 'metric type': metric, 'value': val})
+                for pname, pfunc in PERTURBATIONS.items():
+                    pert_prem = pfunc(prem, nlp, doc=prem_doc)
+                    pert_hyp = pfunc(hyp, nlp, doc=hyp_doc)
+                    pert_text = f"{pert_prem} {pert_hyp}"
+                    pert_complex = compute_complexity(pert_text, nlp)
+                    perturbed_examples[pname].append({'premise': pert_prem, 'hypothesis': pert_hyp, 'text': pert_text, 'label': ex['label'], 'split': ex['split']})
+                    for metric, val in pert_complex.items():
+                        complex_rows.append({'perturbation method': pname, 'metric type': metric, 'value': val})
 
         complex_df = pd.DataFrame(complex_rows)
         complex_agg = complex_df.groupby(['perturbation method', 'metric type']).agg({'value': 'mean'}).reset_index()
@@ -423,7 +466,7 @@ def main(args):
             print(f"  {pname}: {acc_p:.4f}")
 
     perf_df = pd.DataFrame(perf_rows)
-    perf_df.to_csv(out_dir / 'perf.csv', index=False)
+    perf_df.to_csv(str(out_dir / 'perf.csv'), index=False)
     print("Saved perf.csv")
     print("Done.")
 
@@ -433,5 +476,6 @@ if __name__ == '__main__':
     parser.add_argument('--sample_size', type=int, default=15000, help='Number of examples to sample from MultiNLI')
     parser.add_argument('--output_dir', type=str, default='.', help='Directory for data.jsonl, perf.csv, complex.csv')
     parser.add_argument('--data_path', type=str, default=None, help='Use existing data.jsonl instead of loading from HuggingFace')
+    parser.add_argument('--workers', type=int, default=1, help='Parallel workers for perturbation (e.g., 4 for ~4x speedup)')
     args = parser.parse_args()
     main(args)
