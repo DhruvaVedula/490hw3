@@ -279,7 +279,8 @@ def _process_chunk(args):
     chunk, _ = args
     import stanza
     processors = 'tokenize,pos,lemma,constituency,depparse'
-    nlp = stanza.Pipeline('en', processors=processors, verbose=False)
+    # Use CPU in workers to avoid "Cannot re-initialize CUDA in forked subprocess"
+    nlp = stanza.Pipeline('en', processors=processors, verbose=False, use_gpu=False)
     complex_rows = []
     perturbed = {pname: [] for pname in PERTURBATIONS}
     for ex in chunk:
