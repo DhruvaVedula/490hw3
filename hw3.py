@@ -477,6 +477,5 @@ if __name__ == '__main__':
     parser.add_argument('--sample_size', type=int, default=15000, help='Number of examples to sample from MultiNLI')
     parser.add_argument('--output_dir', type=str, default='.', help='Directory for data.jsonl, perf.csv, complex.csv')
     parser.add_argument('--data_path', type=str, default=None, help='Use existing data.jsonl instead of loading from HuggingFace')
-    parser.add_argument('--workers', type=int, default=1, help='Parallel workers for perturbation (e.g., 4 for ~4x speedup)')
     args = parser.parse_args()
     main(args)
