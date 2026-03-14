@@ -161,20 +161,60 @@ def load_multinli(sample_size: int = 15000):
     return examples
 
 
-def save_data_jsonl(examples, path: str = 'data.jsonl'):
-    """Save dataset to data.jsonl."""
+def save_data_jsonl(examples, path: str = 'data.jsonl', perturbed_examples: Optional[dict] = None):
+    """
+    Save dataset to data.jsonl.
+    If perturbed_examples is provided, saves original + all perturbations (each row has perturbation_method).
+    """
     with open(path, 'w') as f:
-        for ex in examples:
-            f.write(json.dumps(ex) + '\n')
+        if perturbed_examples is None:
+            for ex in examples:
+                f.write(json.dumps(ex) + '\n')
+        else:
+            for i, ex in enumerate(examples):
+                # Original
+                row = {**ex, 'perturbation_method': 'original'}
+                f.write(json.dumps(row) + '\n')
+                # Perturbed versions
+                for pname in PERTURBATIONS:
+                    pert = perturbed_examples[pname][i]
+                    row = {
+                        'premise': pert['premise'],
+                        'hypothesis': pert['hypothesis'],
+                        'label': ex['label'],
+                        'split': ex['split'],
+                        'perturbation_method': pname,
+                    }
+                    f.write(json.dumps(row) + '\n')
 
 
 def load_data_jsonl(path: str = 'data.jsonl'):
-    """Load dataset from data.jsonl."""
-    examples = []
+    """Load raw lines from data.jsonl."""
+    data = []
     with open(path) as f:
         for line in f:
-            examples.append(json.loads(line))
-    return examples
+            data.append(json.loads(line))
+    return data
+
+
+def load_data_with_perturbations(path: str):
+    """
+    Load data.jsonl and split into examples + perturbed_examples.
+    Handles both formats: full (original + perturbations) or legacy (original only).
+    Returns (examples, perturbed_examples or None).
+    """
+    data = load_data_jsonl(path)
+    if not data:
+        return [], None
+    if 'perturbation_method' not in data[0]:
+        # Legacy format: original only
+        return data, None
+    examples = [r for r in data if r['perturbation_method'] == 'original']
+    perturbed_examples = {
+        pname: [r for r in data if r['perturbation_method'] == pname]
+        for pname in PERTURBATIONS
+    }
+    return examples, perturbed_examples
 
 
 # =============================================================================
@@ -376,26 +416,42 @@ def main(args):
 
     if args.data_path and Path(args.data_path).exists():
         print(f"Loading data from {args.data_path}...")
-        examples = load_data_jsonl(args.data_path)
+        examples, perturbed_examples = load_data_with_perturbations(args.data_path)
+        print(f"Using {len(examples)} examples")
+        cache_file = out_dir / f"perturbed_cache_{len(examples)}.json"
+        if perturbed_examples is not None:
+            # Full format: data.jsonl has original + all perturbations
+            if cache_file.exists():
+                print(f"Loading complexity metrics from {cache_file}...")
+                with open(cache_file) as f:
+                    cache = json.load(f)
+                complex_agg = pd.DataFrame(cache['complex_rows']).groupby(
+                    ['perturbation method', 'metric type']
+                ).agg({'value': 'mean'}).reset_index()
+                complex_agg.to_csv(str(out_dir / 'complex.csv'), index=False)
+            print("Loaded data with perturbations, skipping perturbation phase.")
+        elif cache_file.exists():
+            # Legacy format: original only, load perturbed from cache
+            print(f"Loading cached perturbations from {cache_file}...")
+            with open(cache_file) as f:
+                cache = json.load(f)
+            perturbed_examples = {pname: cache['perturbed'][pname] for pname in PERTURBATIONS}
+            complex_agg = pd.DataFrame(cache['complex_rows']).groupby(
+                ['perturbation method', 'metric type']
+            ).agg({'value': 'mean'}).reset_index()
+            complex_agg.to_csv(str(out_dir / 'complex.csv'), index=False)
+            print("Loaded cache, skipping perturbations.")
+        else:
+            perturbed_examples = None  # Will run perturbations below
     else:
         print("Loading MultiNLI...")
         examples = load_multinli(sample_size=args.sample_size)
-        save_data_jsonl(examples, str(out_dir / 'data.jsonl'))
-    print(f"Using {len(examples)} examples")
+        print(f"Using {len(examples)} examples")
+        perturbed_examples = None
+        cache_file = out_dir / f"perturbed_cache_{len(examples)}.json"
 
-    # Check for cached perturbations (skip slow parsing when re-running with --data_path)
-    cache_file = out_dir / f"perturbed_cache_{len(examples)}.json"
-    if args.data_path and cache_file.exists():
-        print(f"Loading cached perturbations from {cache_file}...")
-        with open(cache_file) as f:
-            cache = json.load(f)
-        perturbed_examples = {pname: cache['perturbed'][pname] for pname in PERTURBATIONS}
-        complex_agg = pd.DataFrame(cache['complex_rows']).groupby(
-            ['perturbation method', 'metric type']
-        ).agg({'value': 'mean'}).reset_index()
-        complex_agg.to_csv(str(out_dir / 'complex.csv'), index=False)
-        print("Loaded cache, skipping perturbations.")
-    else:
+    # Run perturbations if we don't have perturbed data yet
+    if perturbed_examples is None:
         workers = getattr(args, 'workers', 1) or 1
         if workers > 1:
             import stanza
@@ -438,7 +494,11 @@ def main(args):
         complex_agg.to_csv(str(out_dir / 'complex.csv'), index=False)
         print("Saved complex.csv")
 
-        # Save cache for future --data_path runs
+        # Save data.jsonl with original + all perturbations
+        save_data_jsonl(examples, str(out_dir / 'data.jsonl'), perturbed_examples=perturbed_examples)
+        print("Saved data.jsonl (original + perturbed)")
+
+        # Save cache for future --data_path runs (complex_rows for complexity metrics)
         with open(cache_file, 'w') as f:
             json.dump({'perturbed': perturbed_examples, 'complex_rows': complex_rows}, f)
         print(f"Saved perturbation cache to {cache_file}")

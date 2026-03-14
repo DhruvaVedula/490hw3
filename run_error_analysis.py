@@ -28,7 +28,7 @@ from tqdm import tqdm
 
 # Import from main hw3
 from hw3 import (
-    load_data_jsonl,
+    load_data_with_perturbations,
     get_nli_pipeline,
     _label_to_id,
     PERTURBATIONS,
@@ -123,19 +123,19 @@ def main():
         raise FileNotFoundError(f"Data not found: {data_path}")
 
     print(f"Loading data from {data_path}...")
-    examples = load_data_jsonl(str(data_path))
+    examples, perturbed_examples = load_data_with_perturbations(str(data_path))
 
-    cache_file = out_dir / f"perturbed_cache_{len(examples)}.json"
-    if not cache_file.exists():
-        raise FileNotFoundError(
-            f"Perturbed cache not found: {cache_file}\n"
-            "Run hw3.py first to generate perturbations."
-        )
-
-    print(f"Loading perturbations from {cache_file}...")
-    with open(cache_file) as f:
-        cache = json.load(f)
-    perturbed_examples = {pname: cache['perturbed'][pname] for pname in PERTURBATIONS}
+    if perturbed_examples is None:
+        cache_file = out_dir / f"perturbed_cache_{len(examples)}.json"
+        if not cache_file.exists():
+            raise FileNotFoundError(
+                f"Perturbed cache not found: {cache_file}\n"
+                "Run hw3.py first to generate perturbations, or use data.jsonl with full format."
+            )
+        print(f"Loading perturbations from {cache_file}...")
+        with open(cache_file) as f:
+            cache = json.load(f)
+        perturbed_examples = {pname: cache['perturbed'][pname] for pname in PERTURBATIONS}
 
     models = MODELS
     if args.models:
