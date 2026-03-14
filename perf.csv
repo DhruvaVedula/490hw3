@@ -1,0 +1,17 @@
+model,perturbation method,performance
+textattack/bert-base-uncased-MNLI,original,0.5
+textattack/bert-base-uncased-MNLI,relative_clause,0.5
+textattack/bert-base-uncased-MNLI,appositive,0.5
+textattack/bert-base-uncased-MNLI,extra_relative,0.5
+textattack/roberta-base-MNLI,original,0.5
+textattack/roberta-base-MNLI,relative_clause,0.5
+textattack/roberta-base-MNLI,appositive,0.5
+textattack/roberta-base-MNLI,extra_relative,0.5
+microsoft/deberta-base-mnli,original,0.45
+microsoft/deberta-base-mnli,relative_clause,0.5
+microsoft/deberta-base-mnli,appositive,0.45
+microsoft/deberta-base-mnli,extra_relative,0.4
+typeform/distilbert-base-uncased-mnli,original,0.5
+typeform/distilbert-base-uncased-mnli,relative_clause,0.4
+typeform/distilbert-base-uncased-mnli,appositive,0.3
+typeform/distilbert-base-uncased-mnli,extra_relative,0.35

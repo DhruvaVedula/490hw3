@@ -1,0 +1,13 @@
+perturbation method,metric type,value
+appositive,cfg_depth,10.325
+appositive,mean_dep_len,3.31788308734943
+appositive,subj_verb_dist,4.175
+extra_relative,cfg_depth,12.375
+extra_relative,mean_dep_len,3.5961536213288605
+extra_relative,subj_verb_dist,5.825
+original,cfg_depth,10.233333333333333
+original,mean_dep_len,2.8852735097428828
+original,subj_verb_dist,2.4375
+relative_clause,cfg_depth,12.6
+relative_clause,mean_dep_len,3.3867420282733485
+relative_clause,subj_verb_dist,3.1566666666666667

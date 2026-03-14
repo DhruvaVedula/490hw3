@@ -1,0 +1,18 @@
+# HW3: Syntactic Complexity and Model Robustness
+# Python 3.8+
+
+# PyTorch first (some packages depend on it)
+torch>=2.0.0
+
+# Data & models (transformers 4.45 avoids torch 2.6 CVE check; 4.57+ requires torch 2.6)
+datasets>=2.14.0
+transformers>=4.30.0,<4.50.0
+sentencepiece>=0.1.99
+
+# Parsing (Stanza for constituency + dependency)
+stanza>=1.5.0
+
+# Utilities (numpy<2 for PyTorch 2.2 compatibility)
+pandas>=2.0.0
+numpy>=1.24.0,<2.0.0
+tqdm>=4.65.0
